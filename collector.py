@@ -18,29 +18,50 @@ import json
 import csv
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
 OUT_FILE = "live_data.csv"
 
 
-def fetch(url):
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "SolarShieldAI/6.0"})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            status = r.status
-            raw = r.read()
-            data = json.loads(raw)
-            print(f"[OK]   {url}  status={status}  rows={len(data) if isinstance(data, list) else 'n/a'}", flush=True)
-            return data
-    except urllib.error.HTTPError as e:
-        print(f"[FAIL] {url}  HTTPError  code={e.code}  reason={e.reason}", flush=True)
-        return None
-    except urllib.error.URLError as e:
-        print(f"[FAIL] {url}  URLError  reason={e.reason}", flush=True)
-        return None
-    except Exception as e:
-        print(f"[FAIL] {url}  {type(e).__name__}: {e}", flush=True)
-        return None
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.swpc.noaa.gov/",
+}
+
+
+def fetch(url, retries=2, delay=3):
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            req = urllib.request.Request(url, headers=BROWSER_HEADERS)
+            with urllib.request.urlopen(req, timeout=15) as r:
+                status = r.status
+                raw = r.read()
+                data = json.loads(raw)
+                print(f"[OK]   {url}  status={status}  rows={len(data) if isinstance(data, list) else 'n/a'}  (attempt {attempt})", flush=True)
+                return data
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode(errors="replace")[:300]
+            except Exception:
+                pass
+            print(f"[FAIL] {url}  HTTPError  code={e.code}  reason={e.reason}  attempt={attempt}  body={body!r}", flush=True)
+            last_err = e
+        except urllib.error.URLError as e:
+            print(f"[FAIL] {url}  URLError  reason={e.reason}  attempt={attempt}", flush=True)
+            last_err = e
+        except Exception as e:
+            print(f"[FAIL] {url}  {type(e).__name__}: {e}  attempt={attempt}", flush=True)
+            last_err = e
+        if attempt < retries:
+            time.sleep(delay)
+    return None
+
 
 
 def get_solar_data():
@@ -52,6 +73,9 @@ def get_solar_data():
     if not mag or len(mag) <= 1:
         print("  -> mag-2-hour empty/failed, trying mag-6-hour fallback", flush=True)
         mag = fetch("https://services.swpc.noaa.gov/products/solar-wind/mag-6-hour.json")
+    if not mag or len(mag) <= 1:
+        print("  -> mag-6-hour also failed, trying mag-1-day fallback", flush=True)
+        mag = fetch("https://services.swpc.noaa.gov/products/solar-wind/mag-1-day.json")
     if mag and len(mag) > 1:
         try:
             bz = float(mag[-1][3])
@@ -68,6 +92,9 @@ def get_solar_data():
     if not plasma or len(plasma) <= 1:
         print("  -> plasma-2-hour empty/failed, trying plasma-6-hour fallback", flush=True)
         plasma = fetch("https://services.swpc.noaa.gov/products/solar-wind/plasma-6-hour.json")
+    if not plasma or len(plasma) <= 1:
+        print("  -> plasma-6-hour also failed, trying plasma-1-day fallback", flush=True)
+        plasma = fetch("https://services.swpc.noaa.gov/products/solar-wind/plasma-1-day.json")
     if plasma and len(plasma) > 1:
         try:
             speed = float(plasma[-1][2])
