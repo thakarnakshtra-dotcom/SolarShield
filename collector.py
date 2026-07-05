@@ -69,43 +69,34 @@ def get_solar_data():
     current_kp = max_kp = ssn = f107 = 0.0
     alert_count = 0
 
-    mag = fetch("https://services.swpc.noaa.gov/products/solar-wind/mag-2-hour.json")
-    if not mag or len(mag) <= 1:
-        print("  -> mag-2-hour empty/failed, trying mag-6-hour fallback", flush=True)
-        mag = fetch("https://services.swpc.noaa.gov/products/solar-wind/mag-6-hour.json")
-    if not mag or len(mag) <= 1:
-        print("  -> mag-6-hour also failed, trying mag-1-day fallback", flush=True)
-        mag = fetch("https://services.swpc.noaa.gov/products/solar-wind/mag-1-day.json")
-    if mag and len(mag) > 1:
+    mag = fetch("https://services.swpc.noaa.gov/json/rtsw/rtsw_mag_1m.json")
+    if mag and len(mag) > 0:
         try:
-            bz = float(mag[-1][3])
+            active_rows = [r for r in mag if r.get("active") is True]
+            latest = active_rows[0] if active_rows else mag[0]
+            bz = float(latest.get("bz_gsm", 0.0) or 0.0)
+            bt = float(latest.get("bt", 0.0) or 0.0)
+            print(f"  -> using mag row: time={latest.get('time_tag')} source={latest.get('source')} bz={bz} bt={bt}", flush=True)
         except Exception as e:
-            print(f"  -> bz parse failed on row {mag[-1]}: {e}", flush=True)
-        try:
-            bt = float(mag[-1][6])
-        except Exception as e:
-            print(f"  -> bt parse failed on row {mag[-1]}: {e}", flush=True)
+            print(f"  -> mag parse failed: {e}", flush=True)
     else:
-        print("  -> BOTH mag endpoints failed, bz/bt staying at 0.0", flush=True)
+        print("  -> rtsw_mag_1m.json failed/empty, bz/bt staying at 0.0", flush=True)
 
-    plasma = fetch("https://services.swpc.noaa.gov/products/solar-wind/plasma-2-hour.json")
-    if not plasma or len(plasma) <= 1:
-        print("  -> plasma-2-hour empty/failed, trying plasma-6-hour fallback", flush=True)
-        plasma = fetch("https://services.swpc.noaa.gov/products/solar-wind/plasma-6-hour.json")
-    if not plasma or len(plasma) <= 1:
-        print("  -> plasma-6-hour also failed, trying plasma-1-day fallback", flush=True)
-        plasma = fetch("https://services.swpc.noaa.gov/products/solar-wind/plasma-1-day.json")
-    if plasma and len(plasma) > 1:
+    plasma = fetch("https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json")
+    if plasma and len(plasma) > 0:
         try:
-            speed = float(plasma[-1][2])
+            active_rows = [r for r in plasma if r.get("active") is True and r.get("proton_speed") is not None]
+            latest = active_rows[0] if active_rows else None
+            if latest:
+                speed = float(latest.get("proton_speed", 0.0) or 0.0)
+                density = float(latest.get("proton_density", 0.0) or 0.0)
+                print(f"  -> using plasma row: time={latest.get('time_tag')} source={latest.get('source')} speed={speed} density={density}", flush=True)
+            else:
+                print("  -> no active plasma row with data found, speed/density staying at 0.0", flush=True)
         except Exception as e:
-            print(f"  -> speed parse failed on row {plasma[-1]}: {e}", flush=True)
-        try:
-            density = float(plasma[-1][1])
-        except Exception as e:
-            print(f"  -> density parse failed on row {plasma[-1]}: {e}", flush=True)
+            print(f"  -> plasma parse failed: {e}", flush=True)
     else:
-        print("  -> BOTH plasma endpoints failed, speed/density staying at 0.0", flush=True)
+        print("  -> rtsw_wind_1m.json failed/empty, speed/density staying at 0.0", flush=True)
 
     kp1m = fetch("https://services.swpc.noaa.gov/json/planetary_k_index_1m.json")
     if kp1m and len(kp1m) > 0:
