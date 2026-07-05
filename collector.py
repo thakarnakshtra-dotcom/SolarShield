@@ -21,7 +21,31 @@ import sys
 import time
 from datetime import datetime, timezone
 
+try:
+    from predict_storm import StormPredictor
+except ImportError:
+    StormPredictor = None
+
 OUT_FILE = "live_data.csv"
+MODEL_FILE = "model_weights.json"
+
+
+def get_recent_kp_history(n=2):
+    """
+    Reads the last n Kp values already logged in live_data.csv so the
+    ML model has kp_1_ago / kp_2_ago without needing a separate feed.
+    Returns a list, most recent last. Empty list if not enough history.
+    """
+    if not os.path.exists(OUT_FILE):
+        return []
+    try:
+        with open(OUT_FILE, "r") as f:
+            rows = list(csv.DictReader(f))
+        vals = [float(r["kp"]) for r in rows[-n:] if r.get("kp") not in (None, "")]
+        return vals
+    except Exception as e:
+        print(f"  -> could not read Kp history for ML model: {e}", flush=True)
+        return []
 
 
 BROWSER_HEADERS = {
@@ -195,6 +219,26 @@ def main():
     score, level = calc_risk_leo(d)
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
+    # --- ML storm probability (real, trained model, separate from rule-based score) ---
+    ml_prob, ml_alert = None, None
+    if StormPredictor and os.path.exists(MODEL_FILE):
+        history = get_recent_kp_history(n=2)
+        if len(history) == 2:
+            kp_1_ago, kp_2_ago = history[-1], history[-2]
+            try:
+                sp = StormPredictor(MODEL_FILE)
+                ml_prob, ml_alert_bool, thresh = sp.classify(
+                    d["current_kp"], kp_1_ago, kp_2_ago, sensitivity="balanced"
+                )
+                ml_alert = "YES" if ml_alert_bool else "no"
+                print(f"  -> ML storm probability (next ~6h): {ml_prob:.1%}  alert={ml_alert} (threshold={thresh})", flush=True)
+            except Exception as e:
+                print(f"  -> ML scoring failed: {e}", flush=True)
+        else:
+            print(f"  -> not enough Kp history yet for ML model ({len(history)}/2 rows), skipping", flush=True)
+    else:
+        print("  -> model_weights.json or predict_storm.py not found, skipping ML scoring", flush=True)
+
     print("-" * 60, flush=True)
     print(f"FINAL VALUES: bz={d['bz']} bt={d['bt']} speed={d['speed']} density={d['density']} kp={d['current_kp']}", flush=True)
     print("-" * 60, flush=True)
@@ -205,12 +249,16 @@ def main():
         if not file_exists:
             w.writerow(["timestamp", "kp", "bz", "bt", "solar_wind_speed",
                         "density", "max_kp_forecast", "ssn", "f107",
-                        "active_alerts", "risk_score", "risk_level"])
+                        "active_alerts", "risk_score", "risk_level",
+                        "ml_storm_probability", "ml_alert"])
         w.writerow([now_str, d["current_kp"], d["bz"], d["bt"], d["speed"],
                     d["density"], d["max_kp"], d["ssn"], d["f107"],
-                    d["alert_count"], score, level])
+                    d["alert_count"], score, level,
+                    f"{ml_prob:.4f}" if ml_prob is not None else "",
+                    ml_alert if ml_alert is not None else ""])
 
-    print(f"{now_str} | Kp={d['current_kp']} | risk={score}/10 ({level})", flush=True)
+    print(f"{now_str} | Kp={d['current_kp']} | risk={score}/10 ({level}) | ml_prob={ml_prob:.1%}" if ml_prob is not None
+          else f"{now_str} | Kp={d['current_kp']} | risk={score}/10 ({level}) | ml_prob=n/a", flush=True)
 
 
 if __name__ == "__main__":
