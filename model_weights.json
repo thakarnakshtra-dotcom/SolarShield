@@ -1,0 +1,41 @@
+{
+  "trained_at": "2026-07-05T06:02:29.884709+00:00",
+  "training_rows": 5836,
+  "date_range": [
+    "2024-07-04 06:00:00",
+    "2026-07-04 03:00:00"
+  ],
+  "storm_threshold_kp": 5.0,
+  "lookahead_steps": 2,
+  "resample_hours": 3,
+  "features": [
+    "bias",
+    "kp_now",
+    "kp_1_ago",
+    "slope_2step",
+    "rolling_mean_3"
+  ],
+  "weights": [
+    -4.993564127570497,
+    0.5150789425168905,
+    0.0429893059673648,
+    0.23058062551949934,
+    0.28085552182721624
+  ],
+  "validated_test_metrics_at_threshold_0.25": {
+    "tp": 50,
+    "fp": 47,
+    "tn": 1587,
+    "fn": 67,
+    "accuracy": 0.9348943460879497,
+    "precision": 0.5154639175257731,
+    "recall": 0.42735042735042733,
+    "f1": 0.46728971962616817
+  },
+  "recommended_thresholds": {
+    "high_precision": 0.5,
+    "balanced": 0.25,
+    "high_recall": 0.15
+  },
+  "honesty_note": "Validated on a real 70/30 time-based train/test split of 5836 total 3-hour windows from GFZ Potsdam + NOAA data (July 2024 - July 2026). Production weights above are retrained on the FULL dataset for deployment; the 'validated_test_metrics' field reflects the honest held-out performance from the train-only version, not the production weights directly (standard practice: validate on a split, then retrain on everything for final deployment)."
+}
