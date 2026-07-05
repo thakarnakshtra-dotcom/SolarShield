@@ -1,23 +1,23 @@
 """
-collector.py
+collector.py  (DEBUG VERSION)
 ------------------------------------------------------------
-Lightweight version of your data-fetch + risk-scoring logic,
-designed to run unattended on GitHub Actions every few hours.
+Same as your original, but every fetch() call now prints:
+  - the URL it tried
+  - HTTP status / response length on success
+  - the FULL exception type + message on failure
 
-No email, no PDF, no matplotlib — just: fetch real NOAA data,
-score risk (same formula as solarshield_v6.py, LEO orbit),
-append one row to live_data.csv.
-
-This file lives in your repo at the root. The GitHub Actions
-workflow (.github/workflows/collect_data.yml) runs this on a
-schedule and commits the updated CSV automatically.
+This is temporary. Once we see the real error in the GitHub
+Actions log, we fix the root cause and can strip the logging
+back out (or leave it — it's harmless either way).
 ------------------------------------------------------------
 """
 
 import urllib.request
+import urllib.error
 import json
 import csv
 import os
+import sys
 from datetime import datetime, timezone
 
 OUT_FILE = "live_data.csv"
@@ -27,8 +27,19 @@ def fetch(url):
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "SolarShieldAI/6.0"})
         with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read())
-    except Exception:
+            status = r.status
+            raw = r.read()
+            data = json.loads(raw)
+            print(f"[OK]   {url}  status={status}  rows={len(data) if isinstance(data, list) else 'n/a'}", flush=True)
+            return data
+    except urllib.error.HTTPError as e:
+        print(f"[FAIL] {url}  HTTPError  code={e.code}  reason={e.reason}", flush=True)
+        return None
+    except urllib.error.URLError as e:
+        print(f"[FAIL] {url}  URLError  reason={e.reason}", flush=True)
+        return None
+    except Exception as e:
+        print(f"[FAIL] {url}  {type(e).__name__}: {e}", flush=True)
         return None
 
 
@@ -39,36 +50,50 @@ def get_solar_data():
 
     mag = fetch("https://services.swpc.noaa.gov/products/solar-wind/mag-2-hour.json")
     if not mag or len(mag) <= 1:
+        print("  -> mag-2-hour empty/failed, trying mag-6-hour fallback", flush=True)
         mag = fetch("https://services.swpc.noaa.gov/products/solar-wind/mag-6-hour.json")
     if mag and len(mag) > 1:
-        try: bz = float(mag[-1][3])
-        except Exception: pass
-        try: bt = float(mag[-1][6])
-        except Exception: pass
+        try:
+            bz = float(mag[-1][3])
+        except Exception as e:
+            print(f"  -> bz parse failed on row {mag[-1]}: {e}", flush=True)
+        try:
+            bt = float(mag[-1][6])
+        except Exception as e:
+            print(f"  -> bt parse failed on row {mag[-1]}: {e}", flush=True)
+    else:
+        print("  -> BOTH mag endpoints failed, bz/bt staying at 0.0", flush=True)
 
     plasma = fetch("https://services.swpc.noaa.gov/products/solar-wind/plasma-2-hour.json")
     if not plasma or len(plasma) <= 1:
+        print("  -> plasma-2-hour empty/failed, trying plasma-6-hour fallback", flush=True)
         plasma = fetch("https://services.swpc.noaa.gov/products/solar-wind/plasma-6-hour.json")
     if plasma and len(plasma) > 1:
-        try: speed = float(plasma[-1][2])
-        except Exception: pass
-        try: density = float(plasma[-1][1])
-        except Exception: pass
+        try:
+            speed = float(plasma[-1][2])
+        except Exception as e:
+            print(f"  -> speed parse failed on row {plasma[-1]}: {e}", flush=True)
+        try:
+            density = float(plasma[-1][1])
+        except Exception as e:
+            print(f"  -> density parse failed on row {plasma[-1]}: {e}", flush=True)
+    else:
+        print("  -> BOTH plasma endpoints failed, speed/density staying at 0.0", flush=True)
 
     kp1m = fetch("https://services.swpc.noaa.gov/json/planetary_k_index_1m.json")
     if kp1m and len(kp1m) > 0:
         try:
             current_kp = float(kp1m[-1].get("kp_index", kp1m[-1].get("kp", 0)))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  -> kp1m parse failed: {e}", flush=True)
     if current_kp == 0:
         kpn = fetch("https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json")
         if kpn and len(kpn) > 1:
             try:
                 last_row = kpn[-1]
                 current_kp = float(last_row.get("Kp", last_row.get("kp", 0)))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"  -> kpn parse failed: {e}", flush=True)
 
     kp_fc = fetch("https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json")
     if kp_fc and len(kp_fc) > 1:
@@ -76,10 +101,11 @@ def get_solar_data():
             vals = []
             for r in kp_fc[1:9]:
                 v = r.get("kp", r.get("Kp")) if isinstance(r, dict) else None
-                if v is not None: vals.append(float(v))
+                if v is not None:
+                    vals.append(float(v))
             max_kp = max(vals) if vals else 0
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  -> kp_fc parse failed: {e}", flush=True)
 
     raw = fetch("https://services.swpc.noaa.gov/products/alerts.json")
     if raw:
@@ -90,8 +116,8 @@ def get_solar_data():
         try:
             ssn = float(cycle[-1]["ssn"])
             f107 = float(cycle[-1]["f10.7"])
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  -> cycle parse failed: {e}", flush=True)
 
     return {
         "bz": bz, "bt": bt, "speed": speed, "density": density,
@@ -143,9 +169,17 @@ def calc_risk_leo(d):
 
 
 def main():
+    print("=" * 60, flush=True)
+    print(f"SolarShield collector run @ {datetime.now(timezone.utc).isoformat()}", flush=True)
+    print("=" * 60, flush=True)
+
     d = get_solar_data()
     score, level = calc_risk_leo(d)
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    print("-" * 60, flush=True)
+    print(f"FINAL VALUES: bz={d['bz']} bt={d['bt']} speed={d['speed']} density={d['density']} kp={d['current_kp']}", flush=True)
+    print("-" * 60, flush=True)
 
     file_exists = os.path.exists(OUT_FILE)
     with open(OUT_FILE, "a", newline="") as f:
@@ -158,7 +192,7 @@ def main():
                     d["density"], d["max_kp"], d["ssn"], d["f107"],
                     d["alert_count"], score, level])
 
-    print(f"{now_str} | Kp={d['current_kp']} | risk={score}/10 ({level})")
+    print(f"{now_str} | Kp={d['current_kp']} | risk={score}/10 ({level})", flush=True)
 
 
 if __name__ == "__main__":
