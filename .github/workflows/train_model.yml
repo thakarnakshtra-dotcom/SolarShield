@@ -1,0 +1,39 @@
+name: Train and Export Storm Model
+
+on:
+  workflow_dispatch:
+
+jobs:
+  train-model:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify project files
+        run: |
+          ls -la
+
+      - name: Train and Export Model
+        run: |
+          python train_and_export.py
+
+      - name: Commit updated model_weights.json
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add model_weights.json
+
+          git diff --cached --quiet || git commit -m "Update trained model weights"
+
+          git push
