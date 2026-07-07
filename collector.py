@@ -26,8 +26,24 @@ try:
 except ImportError:
     StormPredictor = None
 
+try:
+    from fetch_space_weather_plus import get_latest_flare, get_cme_earth_impact
+except ImportError:
+    get_latest_flare = get_cme_earth_impact = None
+
+try:
+    from anomaly_detector import check_all
+except ImportError:
+    check_all = None
+
+try:
+    from llm_briefing import generate_briefing, log_briefing
+except ImportError:
+    generate_briefing = log_briefing = None
+
 OUT_FILE = "live_data.csv"
 MODEL_FILE = "model_weights.json"
+ORBIT_TYPE = "LEO"  # change to MEO / GEO if this collector is tracking a different orbit class
 
 
 def get_recent_kp_history(n=2):
@@ -239,9 +255,61 @@ def main():
     else:
         print("  -> model_weights.json or predict_storm.py not found, skipping ML scoring", flush=True)
 
+    # --- Solar flare classification (real GOES data) ---
+    flare_class = "unavailable"
+    if get_latest_flare:
+        try:
+            flare_class, _ = get_latest_flare()
+        except Exception as e:
+            print(f"  -> flare check failed: {e}", flush=True)
+
+    # --- CME Earth-impact check (real NASA DONKI data) ---
+    cme_summary = "none detected"
+    if get_cme_earth_impact:
+        try:
+            cme = get_cme_earth_impact()
+            if cme:
+                cme_summary = (f"speed={cme['cme_speed_km_s']}km/s, "
+                                f"arrival in {cme['hours_until_arrival']}h, "
+                                f"predicted Kp={cme['predicted_kp']}")
+        except Exception as e:
+            print(f"  -> CME check failed: {e}", flush=True)
+
+    # --- Statistical anomaly check against this collector's own history ---
+    anomaly_summary = "none"
+    if check_all:
+        try:
+            anomalies = check_all({
+                "kp": d["current_kp"], "bz": d["bz"],
+                "solar_wind_speed": d["speed"], "density": d["density"]
+            })
+            flagged = [f"{field} (z={r['z_score']})" for field, r in anomalies.items() if r.get("is_anomaly")]
+            anomaly_summary = ", ".join(flagged) if flagged else "none"
+        except Exception as e:
+            print(f"  -> anomaly check failed: {e}", flush=True)
+
     print("-" * 60, flush=True)
     print(f"FINAL VALUES: bz={d['bz']} bt={d['bt']} speed={d['speed']} density={d['density']} kp={d['current_kp']}", flush=True)
+    print(f"Flare class: {flare_class} | CME: {cme_summary} | Anomalies: {anomaly_summary}", flush=True)
     print("-" * 60, flush=True)
+
+    # --- LLM plain-English briefing (only runs if ANTHROPIC_API_KEY is set) ---
+    if generate_briefing:
+        try:
+            briefing_input = {
+                "kp": d["current_kp"], "bz": d["bz"], "speed": d["speed"], "density": d["density"],
+                "risk_score": score, "risk_level": level,
+                "ml_storm_probability": f"{ml_prob:.1%}" if ml_prob is not None else "unavailable",
+                "flare_class": flare_class, "cme_info": cme_summary, "anomalies": anomaly_summary,
+            }
+            briefing_text, err = generate_briefing(briefing_input, orbit_type=ORBIT_TYPE)
+            if err:
+                print(f"  -> LLM briefing skipped: {err}", flush=True)
+            else:
+                print(f"  -> LLM briefing: {briefing_text}", flush=True)
+                log_briefing(briefing_text, briefing_input)
+        except Exception as e:
+            print(f"  -> LLM briefing failed: {e}", flush=True)
 
     file_exists = os.path.exists(OUT_FILE)
     with open(OUT_FILE, "a", newline="") as f:
@@ -250,12 +318,16 @@ def main():
             w.writerow(["timestamp", "kp", "bz", "bt", "solar_wind_speed",
                         "density", "max_kp_forecast", "ssn", "f107",
                         "active_alerts", "risk_score", "risk_level",
-                        "ml_storm_probability", "ml_alert"])
+                        "ml_storm_probability", "ml_alert",
+                        "flare_class", "cme_alert", "anomaly_flag"])
         w.writerow([now_str, d["current_kp"], d["bz"], d["bt"], d["speed"],
                     d["density"], d["max_kp"], d["ssn"], d["f107"],
                     d["alert_count"], score, level,
                     f"{ml_prob:.4f}" if ml_prob is not None else "",
-                    ml_alert if ml_alert is not None else ""])
+                    ml_alert if ml_alert is not None else "",
+                    flare_class,
+                    cme_summary if cme_summary != "none detected" else "no",
+                    anomaly_summary])
 
     print(f"{now_str} | Kp={d['current_kp']} | risk={score}/10 ({level}) | ml_prob={ml_prob:.1%}" if ml_prob is not None
           else f"{now_str} | Kp={d['current_kp']} | risk={score}/10 ({level}) | ml_prob=n/a", flush=True)
