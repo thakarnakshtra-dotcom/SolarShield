@@ -171,3 +171,4 @@ timestamp,kp,bz,bt,solar_wind_speed,density,max_kp_forecast,ssn,f107,active_aler
 2026-07-22T17:15:27,2.0,5.88,10.26,458.1,6.89,3.67,94.4,138.21,20,3,LOW,0.0307,no,B9.6,"speed=579.0km/s, arrival in 13.7h, predicted Kp=5",none
 2026-07-22T19:12:59,1.0,-1.1,4.39,426.9,9.25,3.67,94.4,138.21,20,4,MODERATE,0.0154,no,C1.2,"speed=579.0km/s, arrival in 11.8h, predicted Kp=5",none
 2026-07-22T21:03:47,2.67,0.59,7.79,383.9,7.18,3.67,94.4,138.21,20,2,LOW,0.0526,no,C1.2,"speed=579.0km/s, arrival in 9.9h, predicted Kp=5",none
+2026-07-22T22:59:57,2.0,3.18,8.9,434.9,7.85,3.67,94.4,138.21,20,3,LOW,0.0436,no,C1.2,"speed=579.0km/s, arrival in 8.0h, predicted Kp=5",none
